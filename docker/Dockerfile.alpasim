@@ -4,20 +4,41 @@
 # SPDX-License-Identifier: Apache-2.0
 
 ARG FLASHDREAMS_BASE_IMAGE=flashdreams:local
-FROM ${FLASHDREAMS_BASE_IMAGE} AS wheel-builder
+FROM ${FLASHDREAMS_BASE_IMAGE} AS dependency-builder
 
 WORKDIR /workspace/flashdreams
 
-# Copy only the workspace metadata and package trees. In particular, do not
-# copy checkout-local directories such as .venv or .git into the build.
+# Dockerfile.alpasim.dockerignore limits this context to the selected workspace
+# packages, so checkout-local datasets never enter a COPY layer or build cache.
 COPY pyproject.toml uv.lock ./
 COPY flashdreams ./flashdreams
 COPY integrations ./integrations
 
-# Install the selected workspace packages non-editably while retaining uv's
-# lockfile overrides. Keeping the venv at its final absolute path makes it safe
-# to copy into the runtime stage.
+# Install only third-party dependencies for the source-mounted development
+# target. Keeping the venv at its final path makes it safe to copy between
+# stages without rewriting entry points.
 ENV UV_PROJECT_ENVIRONMENT=/opt/flashdreams
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync \
+    --locked \
+    --package flashdreams-omnidreams \
+    --no-install-workspace
+
+
+FROM ${FLASHDREAMS_BASE_IMAGE} AS development
+
+COPY --from=dependency-builder /opt/flashdreams /opt/flashdreams
+
+ENV VIRTUAL_ENV=/opt/flashdreams
+ENV UV_PROJECT_ENVIRONMENT=/opt/flashdreams
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PYTHONPATH="/workspace/flashdreams/flashdreams:/workspace/flashdreams/integrations/omnidreams:/workspace/flashdreams/integrations/omnidreams/ludus-renderer"
+
+WORKDIR /workspace/flashdreams
+
+
+FROM dependency-builder AS wheel-builder
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync \
@@ -26,11 +47,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --no-editable
 
 
-FROM ${FLASHDREAMS_BASE_IMAGE}
+FROM ${FLASHDREAMS_BASE_IMAGE} AS runtime
 
 COPY --from=wheel-builder /opt/flashdreams /opt/flashdreams
 
 ENV VIRTUAL_ENV=/opt/flashdreams
+ENV UV_PROJECT_ENVIRONMENT=/opt/flashdreams
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 WORKDIR /app

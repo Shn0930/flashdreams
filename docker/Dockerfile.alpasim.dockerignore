@@ -1,0 +1,27 @@
+# Keep the AlpaSim image context limited to the selected workspace packages.
+# This also excludes checkout-local datasets such as integrations/alpadreams.
+**
+!pyproject.toml
+!uv.lock
+!flashdreams/
+!flashdreams/**
+!integrations/
+!integrations/**
+
+# Retained legacy data and local caches are never package inputs.
+integrations/alpadreams/
+integrations/alpadreams/**
+**/.git/
+**/.git/**
+**/.venv/
+**/.venv/**
+**/__pycache__/
+**/__pycache__/**
+**/.pytest_cache/
+**/.pytest_cache/**
+**/.ruff_cache/
+**/.ruff_cache/**
+**/*.pyc
+**/*.pyo
+**/*.sqlite
+**/*.sqlite-*

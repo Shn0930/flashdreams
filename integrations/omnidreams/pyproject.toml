@@ -90,6 +90,11 @@ omnidreams-prepare = "omnidreams.prepare:main"
 # FlashDreams generation, and DrivingGen adapter setup.
 omnidreams-eval = "omnidreams.eval.cli:main"
 
+# Convert one recorded ClipGT cache into the checkpoint-free scene bundle used
+# by FlashDreams' video-model protocol and AlpaSim's artifact loader.
+omnidreams-build-alpasim-usdz = "omnidreams.interactive_drive.clipgt_usdz:main"
+omnidreams-run-alpasim-closed-loop = "omnidreams.interactive_drive.alpasim_closed_loop:main"
+
 # Desktop interactive-drive demo entry point. Requires the
 # ``interactive-drive`` extra (it adds slangpy); without it the
 # presenter import fails fast with a clear message.

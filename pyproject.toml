@@ -10,6 +10,11 @@ members = [
     # Nested sub-packages that the ``integrations/*`` glob does not reach.
     "integrations/omnidreams/ludus-renderer",
 ]
+exclude = [
+    # Data-only legacy checkouts can retain very large artifact directories.
+    # Do not treat this path as a package through the integrations/* glob.
+    "integrations/alpadreams",
+]
 
 # Override nvidia-cublas to >=13.4 because transformer-engine-cu13 2.14.0 was
 # compiled against cuBLAS 13.4.x, while torch 2.11 pins nvidia-cublas 13.1.0.3.
