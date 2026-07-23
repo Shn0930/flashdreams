@@ -121,6 +121,14 @@ Interpret the report as follows:
   baseline JSON; the baseline should contain only expected metric values and
   tolerances.
 
+## Build ClipGT scenes and run an AlpaSim closed loop
+
+Recorded ClipGT Parquet tables can be converted into a checkpoint-free scene
+artifact and used with OmniDreams as AlpaSim's stateful video renderer. See the
+[ClipGT-to-AlpaSim closed-loop guide](docs/clipgt-alpasim-closed-loop.md) for
+the conversion commands, source-mounted Docker workflow, closed-loop data flow,
+output videos, and the detailed ClipGT schema used by the validated sample.
+
 ## Run interactive-drive (desktop demo)
 
 The `omnidreams.interactive_drive` subpackage ships a single-process

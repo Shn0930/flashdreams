@@ -221,6 +221,11 @@ continues with a valid candidate.
 
 ## Run
 
+> [!NOTE]
+> The checkpoint-free ClipGT-to-USDZ and AlpaSim workflow is separate from this
+> desktop demo. See the
+> [ClipGT-to-AlpaSim closed-loop guide](../../docs/clipgt-alpasim-closed-loop.md).
+
 All commands below are run from the **flashdreams workspace root**. The
 `interactive-drive` CLI's defaults for `--scene`, `--manifest`,
 `--scene-dir`, and `--wheel-profiles-dir` resolve to the bundled assets in
