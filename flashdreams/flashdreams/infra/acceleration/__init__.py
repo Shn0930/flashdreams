@@ -20,6 +20,7 @@ from flashdreams.infra.acceleration.frame_prefetch import (
     LazyCudaFrame,
     prefetch_to_numpy,
 )
+from flashdreams.infra.acceleration.layerwise_offload import LayerwiseOffloader
 from flashdreams.infra.acceleration.overlap import (
     CudaStreamOverlap,
     HostThreadOverlap,
@@ -42,6 +43,7 @@ __all__ = [
     "CudaStreamOverlap",
     "HostThreadOverlap",
     "LazyCudaFrame",
+    "LayerwiseOffloader",
     "PrewarmDeadline",
     "PrewarmSequenceTiming",
     "PrewarmTimeoutError",

@@ -24,6 +24,8 @@ Run the benchmark with::
 
 from __future__ import annotations
 
+import hashlib
+import statistics
 from typing import TYPE_CHECKING
 
 import pytest
@@ -59,7 +61,11 @@ _PIXEL_WIDTH = OMNIDREAMS_INTERACTIVE_DRIVE_DEFAULTS.width
 _TEXT_TOKENS = 512
 _WARMUP_ROUNDS = 5
 _BENCHMARK_ROUNDS = 50
+_LAYERWISE_BENCHMARK_ROUNDS = 20
 _SEED = 0
+_TORCH_CASE = next(
+    case for case in BENCHMARK_CASES if case.implementation == "omnidreams_torch"
+)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason=_GPU_REASON)
@@ -75,11 +81,56 @@ def test_full_pipeline_generate_benchmark(
     )
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason=_GPU_REASON)
+@pytest.mark.parametrize(
+    "enable_layerwise_offload",
+    [False, True],
+    ids=["eager-resident", "layerwise-offload"],
+)
+def test_full_pipeline_layerwise_offload_benchmark(
+    benchmark: BenchmarkFixture,
+    enable_layerwise_offload: bool,
+) -> None:
+    """Compare complete eager chunks with and without block-parameter offload."""
+    _run_full_pipeline_benchmark(
+        benchmark,
+        case=_TORCH_CASE,
+        compile_network=False,
+        use_cuda_graph=False,
+        enable_layerwise_offload=enable_layerwise_offload,
+        include_finalize_in_timing=True,
+        benchmark_group="omnidreams-layerwise-offload-full-chunk",
+        benchmark_rounds=_LAYERWISE_BENCHMARK_ROUNDS,
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason=_GPU_REASON)
+def test_full_pipeline_layerwise_offload_deployment_baseline(
+    benchmark: BenchmarkFixture,
+) -> None:
+    """Measure the regular CUDA-graph resident path over one complete chunk."""
+    _run_full_pipeline_benchmark(
+        benchmark,
+        case=_TORCH_CASE,
+        compile_network=False,
+        use_cuda_graph=True,
+        include_finalize_in_timing=True,
+        benchmark_group="omnidreams-layerwise-offload-full-chunk",
+        benchmark_rounds=_LAYERWISE_BENCHMARK_ROUNDS,
+    )
+
+
 @torch.inference_mode()
 def _run_full_pipeline_benchmark(
     benchmark: BenchmarkFixture,
     *,
     case: AttentionBenchmarkCase,
+    compile_network: bool = True,
+    use_cuda_graph: bool = True,
+    enable_layerwise_offload: bool = False,
+    include_finalize_in_timing: bool = False,
+    benchmark_group: str = "omnidreams-full-pipeline-generate",
+    benchmark_rounds: int = _BENCHMARK_ROUNDS,
 ) -> None:
     """Run one DiT backend full-pipeline benchmark variant."""
     if not torch.cuda.is_bf16_supported():
@@ -115,7 +166,9 @@ def _run_full_pipeline_benchmark(
         diffusion_model={
             "seed": _SEED,
             "transformer": {
-                "compile_network": True,
+                "compile_network": compile_network,
+                "use_cuda_graph": use_cuda_graph,
+                "enable_layerwise_offload": enable_layerwise_offload,
                 "network": {
                     "self_attention_backend": self_attention_backend,
                     "cross_attention_backend": case.cross_attention_backend,
@@ -163,6 +216,12 @@ def _run_full_pipeline_benchmark(
     transformer = pipeline.diffusion_model.transformer
     assert isinstance(transformer, CosmosTransformer)
     assert transformer.config is transformer_config
+    assert transformer_config.enable_layerwise_offload is enable_layerwise_offload
+    assert transformer._use_cuda_graph is (
+        use_cuda_graph and not enable_layerwise_offload
+    )
+    offloader = transformer.network.layerwise_offloader
+    assert (offloader is not None) is enable_layerwise_offload
     assert transformer_config.native_dit_acceleration == native_acceleration
     assert transformer_config.native_dit_backend == native_backend
     assert transformer_config.native_dit_attention_backend == native_attention
@@ -259,6 +318,9 @@ def _run_full_pipeline_benchmark(
         hdmap = hdmap_first if autoregressive_index == 0 else hdmap_steady
         run_chunk(autoregressive_index, hdmap)
     torch.cuda.synchronize()
+    steady_allocated_bytes = torch.cuda.memory_allocated(device)
+    steady_reserved_bytes = torch.cuda.memory_reserved(device)
+    torch.cuda.reset_peak_memory_stats(device)
 
     native_selection = transformer._optimized_dit_selection
     native_executor = transformer._optimized_dit_executor
@@ -273,7 +335,7 @@ def _run_full_pipeline_benchmark(
         assert native_selection is None
         assert native_executor is None
 
-    benchmark.group = "omnidreams-full-pipeline-generate"
+    benchmark.group = benchmark_group
 
     next_chunk_index = cache_prefill_chunks
     latest_output: torch.Tensor | None = None
@@ -297,13 +359,65 @@ def _run_full_pipeline_benchmark(
         torch.cuda.synchronize()
         next_chunk_index += 1
 
-    output = benchmark.pedantic(
-        synchronized_generate,
-        teardown=teardown_generate,
-        iterations=1,
-        rounds=_BENCHMARK_ROUNDS,
-        warmup_rounds=_WARMUP_ROUNDS,
+    def synchronized_chunk() -> torch.Tensor:
+        nonlocal latest_output, next_chunk_index
+        latest_output = pipeline.generate(
+            autoregressive_index=next_chunk_index,
+            cache=cache,
+            input=hdmap_steady,
+        )
+        pipeline.finalize(
+            autoregressive_index=next_chunk_index,
+            cache=cache,
+        )
+        torch.cuda.synchronize()
+        next_chunk_index += 1
+        return latest_output
+
+    if include_finalize_in_timing:
+        output = benchmark.pedantic(
+            synchronized_chunk,
+            iterations=1,
+            rounds=benchmark_rounds,
+            warmup_rounds=_WARMUP_ROUNDS,
+        )
+    else:
+        output = benchmark.pedantic(
+            synchronized_generate,
+            teardown=teardown_generate,
+            iterations=1,
+            rounds=benchmark_rounds,
+            warmup_rounds=_WARMUP_ROUNDS,
+        )
+
+    assert benchmark.stats is not None
+    durations = benchmark.stats.stats.data
+    p90_seconds = statistics.quantiles(durations, n=10, method="inclusive")[8]
+    output_float = output.float().cpu().contiguous()
+    gib = 1024**3
+    benchmark.extra_info.update(
+        {
+            "compile_network": compile_network,
+            "use_cuda_graph": transformer._use_cuda_graph,
+            "enable_layerwise_offload": enable_layerwise_offload,
+            "includes_finalize": include_finalize_in_timing,
+            "p90_seconds": p90_seconds,
+            "steady_allocated_gib": steady_allocated_bytes / gib,
+            "steady_reserved_gib": steady_reserved_bytes / gib,
+            "peak_allocated_gib": torch.cuda.max_memory_allocated(device) / gib,
+            "output_mean": output_float.mean().item(),
+            "output_std": output_float.std().item(),
+            "output_sha256": hashlib.sha256(output_float.numpy()).hexdigest(),
+        }
     )
+    if offloader is not None:
+        benchmark.extra_info.update(
+            {
+                "offloaded_parameter_gib": offloader.parameter_bytes / gib,
+                "pinned_host_buffer_gib": offloader.host_buffer_bytes / gib,
+                "device_slot_gib": offloader.device_slot_bytes / gib,
+            }
+        )
 
     assert output is not None
     assert output.shape == (

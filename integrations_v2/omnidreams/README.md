@@ -12,6 +12,7 @@ Its public model variants are `OmnidreamsPipelineConfig` literals in
 ## Pipeline configurations
 
 - `OMNIDREAMS_PIPELINE_CONFIG`
+- `OMNIDREAMS_LAYERWISE_OFFLOAD_PIPELINE_CONFIG`
 - `OMNIDREAMS_OPTIMIZED_GB300_PIPELINE_CONFIG`
 - `OMNIDREAMS_OPTIMIZED_RTX_PRO_6000_PIPELINE_CONFIG`
 - `OMNIDREAMS_PERF_PIPELINE_CONFIG`
@@ -44,6 +45,20 @@ uv run --no-sync flashdreams-run-v2 interactive-drive-omnidreams \
   --mode webrtc --host 0.0.0.0 --port 8089
 ```
 
+For a lower-VRAM eager path, use the opt-in layer-wise offload application:
+
+```bash
+uv run --no-sync flashdreams-run-v2 \
+  interactive-drive-omnidreams-layerwise-offload \
+  --mode webrtc --host 0.0.0.0 --port 8089
+```
+
+This config streams DiT block weights from pinned CPU memory. It reduces GPU
+memory use, but adds host-memory use and does not enable `torch.compile`, CUDA
+graphs, native DiT acceleration, or optimized attention. See the
+[layer-wise offload benchmark](benchmarks/LAYERWISE_OFFLOAD.md) for measured
+tradeoffs and current limitations.
+
 ## Programmatic pipeline access
 
 ```python
@@ -51,6 +66,9 @@ from omnidreams.config import OMNIDREAMS_PIPELINE_CONFIG
 
 pipeline = OMNIDREAMS_PIPELINE_CONFIG.setup().to("cuda").eval()
 ```
+
+Replace the imported config with
+`OMNIDREAMS_LAYERWISE_OFFLOAD_PIPELINE_CONFIG` to use the memory-oriented path.
 
 ## Tests
 
