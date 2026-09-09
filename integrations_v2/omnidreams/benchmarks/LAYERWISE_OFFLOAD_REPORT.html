@@ -1,0 +1,1021 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta
+    name="description"
+    content="OmniDreams 2B 在 NVIDIA H20-3e 上的 layer-wise offload 性能与显存报告。"
+  >
+  <title>OmniDreams 2B Layer-wise Offload 测试报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172126;
+      --muted: #5b6b73;
+      --line: #dce5e7;
+      --panel: #ffffff;
+      --canvas: #f3f7f7;
+      --teal: #087f73;
+      --teal-dark: #075f57;
+      --teal-pale: #dff4ef;
+      --amber: #b66a0a;
+      --amber-pale: #fff2d8;
+      --blue: #3969c8;
+      --purple: #7a4db3;
+      --shadow: 0 18px 50px rgb(26 55 61 / 9%);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% -2%, rgb(8 127 115 / 12%), transparent 27rem),
+        radial-gradient(circle at 93% 2%, rgb(57 105 200 / 9%), transparent 24rem),
+        var(--canvas);
+      color: var(--ink);
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+
+    a { color: var(--teal-dark); }
+
+    code, pre, .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 32px));
+      margin: 32px auto 64px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(32px, 6vw, 70px);
+      border: 1px solid rgb(255 255 255 / 40%);
+      border-radius: 26px;
+      background: linear-gradient(128deg, #063d3a 0%, #087f73 58%, #245ca7 130%);
+      color: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      position: absolute;
+      right: -80px;
+      bottom: -150px;
+      width: 420px;
+      height: 420px;
+      border: 58px solid rgb(255 255 255 / 8%);
+      border-radius: 50%;
+      content: "";
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: #b9eee7;
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 850px;
+      margin: 0;
+      font-size: clamp(2rem, 5vw, 4.25rem);
+      line-height: 1.05;
+      letter-spacing: -0.045em;
+    }
+
+    .hero .subtitle {
+      max-width: 820px;
+      margin: 22px 0 0;
+      color: #e0f4f2;
+      font-size: clamp(1rem, 1.6vw, 1.22rem);
+    }
+
+    .meta-row, .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .tag {
+      padding: 6px 12px;
+      border: 1px solid rgb(255 255 255 / 24%);
+      border-radius: 999px;
+      background: rgb(255 255 255 / 10%);
+      color: #fff;
+      font-size: 0.82rem;
+      backdrop-filter: blur(8px);
+    }
+
+    .print-button {
+      position: absolute;
+      z-index: 2;
+      top: 24px;
+      right: 24px;
+      padding: 9px 14px;
+      border: 1px solid rgb(255 255 255 / 34%);
+      border-radius: 10px;
+      background: rgb(255 255 255 / 12%);
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85rem;
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin: 18px 0;
+    }
+
+    .kpi, .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 8px 30px rgb(26 55 61 / 5%);
+    }
+
+    .kpi {
+      min-height: 145px;
+      padding: 22px;
+      border-radius: 18px;
+    }
+
+    .kpi-label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .kpi-value {
+      margin-top: 8px;
+      color: var(--teal-dark);
+      font-size: clamp(1.7rem, 3vw, 2.5rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.04em;
+    }
+
+    .kpi-note {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .card {
+      margin-top: 18px;
+      padding: clamp(22px, 4vw, 38px);
+      border-radius: 20px;
+    }
+
+    .section-number {
+      color: var(--teal);
+      font-size: 0.74rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin: 3px 0 18px;
+      font-size: clamp(1.35rem, 2.7vw, 2rem);
+      line-height: 1.2;
+      letter-spacing: -0.025em;
+    }
+
+    h3 {
+      margin: 24px 0 10px;
+      font-size: 1.05rem;
+    }
+
+    p { margin: 10px 0; }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 24px;
+      align-items: center;
+    }
+
+    .verdict-badge {
+      display: grid;
+      min-height: 112px;
+      place-content: center;
+      border: 1px solid #a9ddd4;
+      border-radius: 16px;
+      background: var(--teal-pale);
+      color: var(--teal-dark);
+      text-align: center;
+    }
+
+    .verdict-badge strong { font-size: 1.15rem; }
+    .verdict-badge span { font-size: 0.76rem; letter-spacing: 0.08em; }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th, td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    th:first-child, td:first-child { text-align: left; }
+
+    th {
+      color: var(--muted);
+      font-size: 0.77rem;
+      font-weight: 750;
+      letter-spacing: 0.035em;
+    }
+
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr.highlight { background: #f1fbf8; }
+
+    .mode-dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      margin-right: 8px;
+      border-radius: 50%;
+      background: var(--dot);
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .subpanel {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fbfdfd;
+    }
+
+    .bar-chart { margin-top: 18px; }
+    .bar-row { margin: 15px 0; }
+
+    .bar-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .bar-label strong { color: var(--ink); }
+
+    .bar-track {
+      height: 16px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e8eeee;
+    }
+
+    .bar-fill {
+      width: var(--width);
+      height: 100%;
+      border-radius: inherit;
+      background: var(--color);
+    }
+
+    .chart-note, .fine-print {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    #latency-plot {
+      display: block;
+      width: 100%;
+      min-height: 300px;
+      margin-top: 8px;
+      overflow: visible;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1.1fr 52px 1fr 52px 1fr;
+      gap: 10px;
+      align-items: stretch;
+      margin: 22px 0;
+    }
+
+    .arch-node {
+      display: grid;
+      min-height: 150px;
+      place-content: center;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fbfdfd;
+      text-align: center;
+    }
+
+    .arch-node strong { display: block; margin-bottom: 8px; }
+    .arch-node span { color: var(--muted); font-size: 0.84rem; }
+
+    .arch-node.cpu { border-color: #b6dcd7; background: var(--teal-pale); }
+    .arch-node.slots { border-color: #f1cd91; background: var(--amber-pale); }
+
+    .arrow {
+      display: grid;
+      place-content: center;
+      color: var(--muted);
+      font-size: 1.6rem;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: 105px repeat(4, 1fr);
+      gap: 6px;
+      margin-top: 22px;
+      font-size: 0.78rem;
+    }
+
+    .timeline > div {
+      min-height: 38px;
+      padding: 8px;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .timeline .row-label {
+      display: grid;
+      place-content: center end;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .copy { background: #dce8ff; color: #244f9f; }
+    .compute { background: #dff4ef; color: var(--teal-dark); }
+    .idle { border: 1px dashed #d7dfdf; color: #98a5aa; }
+
+    .fact-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .fact {
+      padding: 14px;
+      border-radius: 12px;
+      background: #f5f8f8;
+    }
+
+    .fact dt {
+      color: var(--muted);
+      font-size: 0.73rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .fact dd {
+      margin: 4px 0 0;
+      font-size: 0.9rem;
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+
+    .check-list, .limit-list { padding-left: 1.2rem; }
+    .check-list li, .limit-list li { margin: 7px 0; }
+
+    .callout {
+      margin-top: 18px;
+      padding: 15px 18px;
+      border-left: 4px solid var(--amber);
+      border-radius: 0 10px 10px 0;
+      background: var(--amber-pale);
+      color: #64410f;
+    }
+
+    pre {
+      overflow-x: auto;
+      padding: 18px;
+      border-radius: 14px;
+      background: #122125;
+      color: #dceceb;
+      font-size: 0.78rem;
+      line-height: 1.55;
+    }
+
+    details {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdfd;
+    }
+
+    summary {
+      padding: 13px 16px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    details > div { padding: 0 16px 16px; }
+
+    .hash {
+      display: block;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #f5f8f8;
+      font-size: 0.76rem;
+      overflow-wrap: anywhere;
+    }
+
+    footer {
+      padding: 28px 4px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: center;
+    }
+
+    @media (max-width: 860px) {
+      .kpis, .fact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-2 { grid-template-columns: 1fr; }
+      .verdict { grid-template-columns: 1fr; }
+      .architecture { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); }
+    }
+
+    @media (max-width: 520px) {
+      .page { width: min(100% - 18px, 1180px); margin-top: 9px; }
+      .hero, .card { border-radius: 16px; }
+      .hero { padding: 64px 22px 30px; }
+      .print-button { top: 16px; right: 16px; }
+      .kpis, .fact-grid { grid-template-columns: 1fr; }
+      th, td { padding: 10px; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .page { width: 100%; margin: 0; }
+      .hero, .card, .kpi { box-shadow: none; break-inside: avoid; }
+      .print-button { display: none; }
+      details { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <button class="print-button" type="button" onclick="window.print()">打印 / 保存 PDF</button>
+      <p class="eyebrow">FlashDreams · Performance Validation</p>
+      <h1>OmniDreams 2B<br>Layer-wise Offload</h1>
+      <p class="subtitle">
+        单卡 H20-3e、BF16、1280×704 稳态流式推理对照。目标是用 pinned CPU
+        memory 和双 GPU slot 降低显存，而非提高吞吐。
+      </p>
+      <div class="tag-row">
+        <span class="tag">模型：2B single-view distilled</span>
+        <span class="tag">Case：omnidreams_torch</span>
+        <span class="tag">5 warmups + 20 measured</span>
+        <span class="tag">测试日期：2026-09-08</span>
+      </div>
+    </header>
+
+    <section class="kpis" aria-label="关键结果">
+      <article class="kpi">
+        <div class="kpi-label">峰值 GPU 显存</div>
+        <div class="kpi-value">−34.16%</div>
+        <div class="kpi-note">相对 matched eager，减少 3.3715 GiB</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">中位 chunk 延迟</div>
+        <div class="kpi-value">+0.10%</div>
+        <div class="kpi-note">1.553781 s → 1.555395 s</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Pinned host memory</div>
+        <div class="kpi-value">+3.61 GiB</div>
+        <div class="kpi-note">28 个 DiT block 的 CPU master weights</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">受控输出一致性</div>
+        <div class="kpi-value">Exact</div>
+        <div class="kpi-note">三种模式的最终 tensor SHA-256 相同</div>
+      </article>
+    </section>
+
+    <section class="card verdict" aria-labelledby="verdict-title">
+      <div class="verdict-badge">
+        <strong>Useful opt-in</strong>
+        <span>验收状态</span>
+      </div>
+      <div>
+        <div class="section-number">Executive verdict</div>
+        <h2 id="verdict-title">适合显存受限部署，不替代 resident 快路径</h2>
+        <p>
+          在这组硬件和模型 shape 上，逐层权重传输的大部分成本被当前层计算覆盖，
+          观测上以约 0.10% 的 matched-eager 中位延迟差换得约 34% 的峰值显存下降。
+          显存充足时仍优先使用 CUDA Graph resident；需要释放约 3.37 GiB GPU
+          容量时，再启用 layer-wise offload。
+        </p>
+        <p class="fine-print">
+          0.10% 小于单次 run 内约 9–10 ms 的状态阶跃，不能视为统计显著回退；
+          当前证据支持的表述是“稳态性能基本持平”。
+        </p>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="results-title">
+      <div class="section-number">01 · Results</div>
+      <h2 id="results-title">三种执行模式的稳态结果</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>模式</th>
+              <th>Median / chunk</th>
+              <th>p90</th>
+              <th>Frames/s</th>
+              <th>Steady allocated</th>
+              <th>Reserved</th>
+              <th>Peak allocated</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="mode-dot" style="--dot:#3969c8"></span>Eager resident</td>
+              <td>1.553781 s</td>
+              <td>1.554243 s</td>
+              <td>5.149</td>
+              <td>9.410452 GiB</td>
+              <td>16.716797 GiB</td>
+              <td>9.870143 GiB</td>
+            </tr>
+            <tr class="highlight">
+              <td><span class="mode-dot" style="--dot:#087f73"></span>Layer-wise offload</td>
+              <td>1.555395 s</td>
+              <td>1.557140 s</td>
+              <td>5.143</td>
+              <td>6.038056 GiB</td>
+              <td>13.369141 GiB</td>
+              <td>6.498617 GiB</td>
+            </tr>
+            <tr>
+              <td><span class="mode-dot" style="--dot:#7a4db3"></span>CUDA Graph resident</td>
+              <td>1.548858 s</td>
+              <td>1.549428 s</td>
+              <td>5.165</td>
+              <td>9.448424 GiB</td>
+              <td>16.833984 GiB</td>
+              <td>9.568480 GiB</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2" style="margin-top:22px">
+        <article class="subpanel">
+          <h3 style="margin-top:0">峰值 PyTorch allocated 显存</h3>
+          <div class="bar-chart" role="img" aria-label="三种模式峰值显存柱状图，单位 GiB">
+            <div class="bar-row">
+              <div class="bar-label"><span>Eager resident</span><strong>9.870 GiB</strong></div>
+              <div class="bar-track"><div class="bar-fill" style="--width:98.70%;--color:#3969c8"></div></div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label"><span>Layer-wise offload</span><strong>6.499 GiB</strong></div>
+              <div class="bar-track"><div class="bar-fill" style="--width:64.99%;--color:#087f73"></div></div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-label"><span>CUDA Graph resident</span><strong>9.568 GiB</strong></div>
+              <div class="bar-track"><div class="bar-fill" style="--width:95.68%;--color:#7a4db3"></div></div>
+            </div>
+          </div>
+          <p class="chart-note">横轴上限 10 GiB；数据来自进程内 PyTorch CUDA allocator。</p>
+        </article>
+
+        <article class="subpanel">
+          <h3 style="margin-top:0">关键差值</h3>
+          <table>
+            <thead><tr><th>对照</th><th>Median</th><th>Peak GPU</th></tr></thead>
+            <tbody>
+              <tr><td>Offload vs Eager</td><td>+0.10%</td><td>−34.16%</td></tr>
+              <tr><td>Offload vs CUDA Graph</td><td>+0.42%</td><td>−32.08%</td></tr>
+            </tbody>
+          </table>
+          <p class="chart-note">
+            Eager resident 是隔离 offload 成本的公平主基线；CUDA Graph resident
+            是当前部署快路径的上下文基线。
+          </p>
+        </article>
+      </div>
+
+      <article class="subpanel" style="margin-top:18px">
+        <h3 style="margin-top:0">20 个测量 chunk 的延迟分布</h3>
+        <svg id="latency-plot" viewBox="0 0 960 310" role="img" aria-labelledby="plot-title plot-desc">
+          <title id="plot-title">三种模式逐 chunk 延迟</title>
+          <desc id="plot-desc">横轴为测量轮次一到二十，纵轴为秒。</desc>
+        </svg>
+        <div class="legend" aria-hidden="true">
+          <span><span class="mode-dot" style="--dot:#3969c8"></span>Eager resident</span>
+          <span><span class="mode-dot" style="--dot:#087f73"></span>Layer-wise offload</span>
+          <span><span class="mode-dot" style="--dot:#7a4db3"></span>CUDA Graph resident</span>
+        </div>
+        <p class="chart-note">
+          三组序列后半程均出现阶跃下降，pytest-benchmark 分别标记了 8、9、6 个
+          stddev outliers。这里只有每模式一次独立进程 run，没有重复试验或置信区间；
+          图中的微小模式差异不应解释为统计显著。
+        </p>
+      </article>
+    </section>
+
+    <section class="card" aria-labelledby="architecture-title">
+      <div class="section-number">02 · Architecture</div>
+      <h2 id="architecture-title">Pinned CPU master + 固定双 slot 预取</h2>
+      <div class="architecture" role="img" aria-label="Layer-wise offload 数据流">
+        <div class="arch-node cpu">
+          <strong>CPU pinned master</strong>
+          <span>28 blocks · 3.6094 GiB<br>按 dtype 对齐打包，推理期间不可变</span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="arch-node slots">
+          <strong>GPU slot A / B</strong>
+          <span>两个最大层缓冲 · 0.2578 GiB<br>当前层 + 下一层</span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="arch-node">
+          <strong>Compute stream</strong>
+          <span>Parameter 绑定到 slot view<br>执行后只解绑，不做 D2H 回写</span>
+        </div>
+      </div>
+
+      <div class="timeline" aria-label="拷贝计算重叠时间线">
+        <div class="row-label">Copy stream</div>
+        <div class="copy">copy L0 → A</div>
+        <div class="copy">copy L1 → B</div>
+        <div class="copy">copy L2 → A</div>
+        <div class="copy">copy L3 → B</div>
+        <div class="row-label">Compute stream</div>
+        <div class="idle">等待 L0 ready</div>
+        <div class="compute">compute L0</div>
+        <div class="compute">compute L1</div>
+        <div class="compute">compute L2</div>
+      </div>
+      <p class="fine-print">
+        <strong>ready_event</strong> 保证 copy 完成后才能计算；
+        <strong>reusable_event</strong> 保证计算完成后才能覆盖 slot。
+        固定两个 slot 避免异步深队列把临时权重扩张成整网显存。
+        默认完整 chunk 包含约三次 DiT，因此理论上传输约 10.8282 GiB block
+        weights；本次未采集 H2D profiler telemetry，不能断言传输被完全隐藏。
+      </p>
+
+      <div class="grid-2">
+        <div>
+          <h3>初始化</h3>
+          <ol class="check-list">
+            <li>CPU 创建网络并加载真实 checkpoint。</li>
+            <li>执行 load-time 权重变换。</li>
+            <li>逐 block 打包至 pinned host buffer。</li>
+            <li>原 Parameter 保持 identity，但绑定为空 placeholder。</li>
+            <li>父 pipeline 移到 CUDA 时不再搬运整套 block 权重。</li>
+          </ol>
+        </div>
+        <div>
+          <h3>覆盖的参数访问路径</h3>
+          <ul class="check-list">
+            <li>普通 DiT block forward。</li>
+            <li>cross-attention KV-cache 初始化。</li>
+            <li>替换 text embeddings 后重算 cross-attention KV。</li>
+          </ul>
+          <p class="fine-print">
+            非 block 权重、KV cache 和 activation 仍然常驻 GPU。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="case-title">
+      <div class="section-number">03 · Model &amp; Case</div>
+      <h2 id="case-title">测试的是哪个模型、哪个 case</h2>
+      <dl class="fact-grid">
+        <div class="fact"><dt>Model</dt><dd>OmniDreams 2B single-view distilled</dd></div>
+        <div class="fact"><dt>Checkpoint</dt><dd>nvidia/omni-dreams-models · single_view/2b_res720p_30fps_i2v_hdmap_distilled.pt</dd></div>
+        <div class="fact"><dt>Benchmark case</dt><dd>omnidreams_torch</dd></div>
+        <div class="fact"><dt>Attention</dt><dd>OmniDreams Torch self + cross</dd></div>
+        <div class="fact"><dt>Precision</dt><dd>BF16</dd></div>
+        <div class="fact"><dt>Shape</dt><dd>batch 1 · view 1 · 1280×704</dd></div>
+        <div class="fact"><dt>DiT</dt><dd>28 blocks · len_t=2</dd></div>
+        <div class="fact"><dt>Scheduler</dt><dd>2 steps · t=1000, 500</dd></div>
+        <div class="fact"><dt>Steady output</dt><dd>8 decoded frames / chunk</dd></div>
+      </dl>
+      <div class="callout">
+        未使用 optimized FP8 attention、native CUDA DiT、Sparge 或 SageAttention。
+        三种模式始终使用同一个 BF16 PyTorch reference case。
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="method-title">
+      <div class="section-number">04 · Methodology</div>
+      <h2 id="method-title">稳态 recurring chunk，而非 UI 端到端延迟</h2>
+      <div class="grid-2">
+        <div class="subpanel">
+          <h3 style="margin-top:0">计时范围</h3>
+          <ul class="check-list">
+            <li>每个 chunk 的 HDMap Wan/LightVAE encoder。</li>
+            <li>两次 DiT denoising forward。</li>
+            <li>TAEHV/LightTAE decode。</li>
+            <li>KV-cache finalize；它会再执行一次 DiT forward。</li>
+            <li>CUDA synchronize，确保报告的是完成时间。</li>
+          </ul>
+        </div>
+        <div class="subpanel">
+          <h3 style="margin-top:0">明确排除</h3>
+          <ul class="limit-list">
+            <li>一次性文本编码和首帧图像编码。</li>
+            <li>checkpoint 加载和 pinned-buffer 构造。</li>
+            <li>CUDA Graph capture、首次可见帧和启动时间。</li>
+            <li>UI、WebRTC、MP4 编码及呈现队列。</li>
+          </ul>
+        </div>
+      </div>
+      <p>
+        输入为长度 512 的全零 text embedding、全零 initial-image embedding，以及 seed 0
+        生成的固定随机 BF16 HDMap。先填满 attention window，再执行 5 个 warmup
+        chunks 和 20 个 measured chunks。三种模式各自在新进程中运行，避免 CUDA
+        caching allocator 污染 reserved-memory 对比。
+      </p>
+
+      <h3>数值一致性</h3>
+      <p>
+        三个受控 final chunk 的 mean、std 和 SHA-256 完全相同。这证明本 case
+        的最终 tensor exact parity，不等价于真实场景的完整 rollout 质量评估。
+      </p>
+      <span class="hash mono">c610fb94cc012fe39e23aa3fd74a9d4d86bcfb365f710d47d154741fd7aa8bd7</span>
+      <p class="fine-print">
+        hash 前先将输出转换为 contiguous FP32；三个输出的 mean 均为
+        −0.39255329966545105，std 均为 0.03538328409194946。
+      </p>
+    </section>
+
+    <section class="card" aria-labelledby="environment-title">
+      <div class="section-number">05 · Environment &amp; Validation</div>
+      <h2 id="environment-title">环境、代码版本和测试门禁</h2>
+      <dl class="fact-grid">
+        <div class="fact"><dt>GPU</dt><dd>NVIDIA H20-3e · one GPU</dd></div>
+        <div class="fact"><dt>Driver</dt><dd>580.95.05</dd></div>
+        <div class="fact"><dt>CUDA / cuDNN</dt><dd>13.0 / 9.2.0</dd></div>
+        <div class="fact"><dt>PyTorch</dt><dd>2.12.1+cu130</dd></div>
+        <div class="fact"><dt>NUMA binding</dt><dd>GPU 6 · node 1</dd></div>
+        <div class="fact"><dt>Python / benchmark</dt><dd>3.12.13 / pytest-benchmark 5.3.0</dd></div>
+        <div class="fact"><dt>CPU / kernel</dt><dd>Xeon Platinum 8468V · Linux 5.15.0-1069-nvidia</dd></div>
+        <div class="fact"><dt>Implementation commit</dt><dd>21f71ca7</dd></div>
+      </dl>
+      <p class="fine-print">
+        Benchmark JSON 记录的 Git base 为 <span class="mono">d9b25167</span> 且
+        <span class="mono">dirty=true</span>；当时的实现改动随后提交为
+        <span class="mono">21f71ca7</span>。GPU 上存在其他进程的 idle service
+        contexts，但保留的 clean runs 未观察到竞争利用率；显存指标均为本进程的
+        PyTorch allocator 数据。
+      </p>
+      <p class="fine-print">
+        Retained clean artifacts：<span class="mono">pipeline-eager-resident-rerun.json</span>、
+        <span class="mono">pipeline-layerwise-offload.json</span>、
+        <span class="mono">pipeline-cuda-graph-resident.json</span>。旧的
+        <span class="mono">pipeline-eager-resident.json</span> 曾受外部干扰，未用于本报告。
+        全部 case 均为 <span class="mono">compile_network=false</span>、native DiT
+        disabled；仅 graph baseline 启用 CUDA Graph，仅 offload case 启用
+        layer-wise offload。HF offline，<span class="mono">cudnn.benchmark=true</span>，
+        autotune 已由 warmup 吸收。
+      </p>
+
+      <div class="grid-2">
+        <div class="subpanel">
+          <h3 style="margin-top:0">通过</h3>
+          <ul class="check-list">
+            <li>FlashDreams core CPU：691 passed。</li>
+            <li>OmniDreams CPU：198 passed，2 skipped。</li>
+            <li>H20 GPU 双 slot 深异步队列：1 passed。</li>
+            <li>ruff、ty、pre-commit 和 diff check。</li>
+          </ul>
+        </div>
+        <div class="subpanel">
+          <h3 style="margin-top:0">尚未采集</h3>
+          <ul class="limit-list">
+            <li>逐 stage 独立耗时和 PCIe/H2D profiler timeline。</li>
+            <li>启动峰值、首帧时间和 pinned allocation 时间。</li>
+            <li>多 GPU、多视角及其他 interconnect。</li>
+            <li>真实场景长 rollout 的视觉质量指标。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="limits-title">
+      <div class="section-number">06 · Constraints</div>
+      <h2 id="limits-title">当前兼容性边界</h2>
+      <ul class="limit-list">
+        <li>仅用于单线程、immutable-weight 推理，不支持训练或运行时参数修改。</li>
+        <li>不支持 DTensor、tied/storage-aliased parameters 或启用后的 dtype 转换。</li>
+        <li>OmniDreams offload 仅支持标准 OmniDreams self/cross attention backend。</li>
+        <li>整网 <code>torch.compile</code> 和 CUDA Graph 会被关闭。</li>
+        <li>不兼容 native DiT acceleration 和 runtime text-edit LoRA。</li>
+        <li>offload 后 state-dict save/load fail-fast，应重新加载原 checkpoint。</li>
+      </ul>
+      <div class="callout">
+        本报告是单一 H20-3e stack 的证据，不应直接外推到其他 GPU、PCIe 代际、
+        NUMA 拓扑或模型规模。
+      </div>
+      <p class="fine-print">
+        3.6094 GiB 是 offloader 所分配 host buffer 的字节数，不是进程 host RSS；
+        reserved GPU memory 是测点值而非 peak-reserved，也不等同于
+        <span class="mono">nvidia-smi</span> 的整卡占用。
+      </p>
+    </section>
+
+    <section class="card" aria-labelledby="reproduce-title">
+      <div class="section-number">07 · Reproduction</div>
+      <h2 id="reproduce-title">三个 case 必须分别启动新进程</h2>
+      <pre><code>mkdir -p artifacts/benchmark/omnidreams/layerwise
+
+CUDA_VISIBLE_DEVICES=6 HF_HUB_OFFLINE=1 \
+  numactl --cpunodebind=1 --membind=1 \
+  .venv/bin/python -m pytest \
+  'integrations_v2/omnidreams/benchmarks/test_pipeline.py::test_full_pipeline_layerwise_offload_benchmark[eager-resident]' \
+  -p no:manual_marker -m manual --benchmark-only \
+  --benchmark-json=artifacts/benchmark/omnidreams/layerwise/pipeline-eager-resident.json
+
+CUDA_VISIBLE_DEVICES=6 HF_HUB_OFFLINE=1 \
+  numactl --cpunodebind=1 --membind=1 \
+  .venv/bin/python -m pytest \
+  'integrations_v2/omnidreams/benchmarks/test_pipeline.py::test_full_pipeline_layerwise_offload_benchmark[layerwise-offload]' \
+  -p no:manual_marker -m manual --benchmark-only \
+  --benchmark-json=artifacts/benchmark/omnidreams/layerwise/pipeline-layerwise-offload.json
+
+CUDA_VISIBLE_DEVICES=6 HF_HUB_OFFLINE=1 \
+  numactl --cpunodebind=1 --membind=1 \
+  .venv/bin/python -m pytest \
+  integrations_v2/omnidreams/benchmarks/test_pipeline.py::test_full_pipeline_layerwise_offload_deployment_baseline \
+  -p no:manual_marker -m manual --benchmark-only \
+  --benchmark-json=artifacts/benchmark/omnidreams/layerwise/pipeline-cuda-graph-resident.json</code></pre>
+
+      <details>
+        <summary>查看报告内嵌的原始 20 轮 latency samples</summary>
+        <div><pre id="raw-json"></pre></div>
+      </details>
+      <p class="fine-print">
+        详细文字版方法见 <a href="LAYERWISE_OFFLOAD.md">LAYERWISE_OFFLOAD.md</a>；
+        benchmark harness 见 <a href="test_pipeline.py">test_pipeline.py</a>。
+      </p>
+    </section>
+
+    <footer>
+      FlashDreams OmniDreams layer-wise offload report · 生成于 2026-09-09 ·
+      self-contained HTML, no external assets
+    </footer>
+  </main>
+
+  <script id="benchmark-data" type="application/json">
+  {
+    "eager-resident": {
+      "label": "Eager resident",
+      "color": "#3969c8",
+      "samples": [
+        1.5537645034492016, 1.5538932867348194, 1.5540924370288849,
+        1.5544611774384975, 1.5538866259157658, 1.553795114159584,
+        1.554320227354765, 1.5540028419345617, 1.553928155452013,
+        1.554145459085703, 1.5537674892693758, 1.5542348474264145,
+        1.5441212244331837, 1.544156152755022, 1.54394406452775,
+        1.544274464249611, 1.5439029466360807, 1.5438270065933466,
+        1.5441621281206608, 1.543573634698987
+      ]
+    },
+    "layerwise-offload": {
+      "label": "Layer-wise offload",
+      "color": "#087f73",
+      "samples": [
+        1.5554602332413197, 1.5553300213068724, 1.555195203050971,
+        1.5552721191197634, 1.5555846393108368, 1.5589549075812101,
+        1.5583272129297256, 1.5563864726573229, 1.5570083372294903,
+        1.5558382514864206, 1.5564916171133518, 1.556317511945963,
+        1.5565518215298653, 1.5468093939125538, 1.5464739799499512,
+        1.5459052324295044, 1.5465228166431189, 1.5465023387223482,
+        1.5470223408192396, 1.5459360983222723
+      ]
+    },
+    "cuda-graph-resident": {
+      "label": "CUDA Graph resident",
+      "color": "#7a4db3",
+      "samples": [
+        1.5485382806509733, 1.5494565702974796, 1.5494271907955408,
+        1.5485864225775003, 1.5487801302224398, 1.5492456760257483,
+        1.5489323921501637, 1.5490743685513735, 1.5494038201868534,
+        1.5491240695118904, 1.5487828273326159, 1.5494123511016369,
+        1.549154493957758, 1.5494312588125467, 1.5398869048804045,
+        1.5395041946321726, 1.540020002052188, 1.5388068966567516,
+        1.5389190204441547, 1.5397719964385033
+      ]
+    }
+  }
+  </script>
+  <script>
+    (() => {
+      const data = JSON.parse(document.getElementById("benchmark-data").textContent);
+      const svg = document.getElementById("latency-plot");
+      const ns = "http://www.w3.org/2000/svg";
+      const width = 960;
+      const height = 310;
+      const margin = { top: 18, right: 24, bottom: 42, left: 68 };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+      const yMin = 1.536;
+      const yMax = 1.561;
+
+      const add = (name, attributes, parent = svg) => {
+        const node = document.createElementNS(ns, name);
+        Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
+        parent.appendChild(node);
+        return node;
+      };
+
+      const x = index => margin.left + index * plotWidth / 19;
+      const y = value => margin.top + (yMax - value) * plotHeight / (yMax - yMin);
+
+      [1.54, 1.545, 1.55, 1.555, 1.56].forEach(tick => {
+        const yy = y(tick);
+        add("line", {
+          x1: margin.left, x2: width - margin.right, y1: yy, y2: yy,
+          stroke: "#dce5e7", "stroke-width": "1"
+        });
+        const label = add("text", {
+          x: margin.left - 10, y: yy + 4, "text-anchor": "end",
+          fill: "#5b6b73", "font-size": "11"
+        });
+        label.textContent = tick.toFixed(3) + " s";
+      });
+
+      [1, 5, 10, 15, 20].forEach(round => {
+        const xx = x(round - 1);
+        const label = add("text", {
+          x: xx, y: height - 14, "text-anchor": "middle",
+          fill: "#5b6b73", "font-size": "11"
+        });
+        label.textContent = String(round);
+      });
+
+      Object.values(data).forEach(series => {
+        const points = series.samples.map((value, index) => `${x(index)},${y(value)}`).join(" ");
+        add("polyline", {
+          points,
+          fill: "none",
+          stroke: series.color,
+          "stroke-width": "2",
+          "stroke-linejoin": "round",
+          "stroke-linecap": "round",
+          opacity: "0.72"
+        });
+        series.samples.forEach((value, index) => {
+          const circle = add("circle", {
+            cx: x(index), cy: y(value), r: "3.4",
+            fill: series.color, stroke: "#ffffff", "stroke-width": "1"
+          });
+          const title = add("title", {}, circle);
+          title.textContent = `${series.label} · round ${index + 1}: ${value.toFixed(6)} s`;
+        });
+      });
+
+      const xLabel = add("text", {
+        x: margin.left + plotWidth / 2, y: height - 1,
+        "text-anchor": "middle", fill: "#5b6b73", "font-size": "11"
+      });
+      xLabel.textContent = "Measured chunk index";
+
+      document.getElementById("raw-json").textContent = JSON.stringify(data, null, 2);
+    })();
+  </script>
+</body>
+</html>

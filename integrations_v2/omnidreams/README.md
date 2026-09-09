@@ -56,7 +56,8 @@ uv run --no-sync flashdreams-run-v2 \
 This config streams DiT block weights from pinned CPU memory. It reduces GPU
 memory use, but adds host-memory use and does not enable `torch.compile`, CUDA
 graphs, native DiT acceleration, or optimized attention. See the
-[layer-wise offload benchmark](benchmarks/LAYERWISE_OFFLOAD.md) for measured
+[HTML benchmark report](benchmarks/LAYERWISE_OFFLOAD_REPORT.html) for charts and
+the [detailed methodology](benchmarks/LAYERWISE_OFFLOAD.md) for measured
 tradeoffs and current limitations.
 
 ## Programmatic pipeline access

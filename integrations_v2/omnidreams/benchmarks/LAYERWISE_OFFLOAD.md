@@ -5,6 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # OmniDreams layer-wise offload
 
+Open the [self-contained HTML benchmark report](LAYERWISE_OFFLOAD_REPORT.html)
+for charts, implementation diagrams, and embedded per-round latency samples.
+
 Layer-wise offload is a **useful opt-in memory optimization**, not a throughput
 optimization. On the measured H20-3e stack, it reduced peak PyTorch-allocated
 GPU memory by 3.37 GiB (34.16%) versus the matched eager resident path while
